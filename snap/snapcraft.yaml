@@ -1,0 +1,135 @@
+name: edgex-device-coap
+base: core20
+adopt-info: version
+summary: Allow a 3rd party sensor application to push data into EdgeX
+description: |
+  The EdgeX Device coap Service is developed to provide REST-based 
+  access to resources, especially for use in constrained IoT devices
+architectures:
+  - build-on: arm64
+  - build-on: amd64
+
+icon: snap/local/assets/edgex-snap-icon.png
+
+grade: stable
+confinement: strict
+
+apps:
+  device-coap:
+    command: bin/device-coap $CONSUL_ADDR_OPT $CONFIG_DIR_OPT
+    adapter: full
+    environment:
+      CONSUL_ADDR_OPT: "--registry=consul://localhost:8500"
+      CONFIG_DIR_OPT: "--confdir=$SNAP_DATA/config/edgex-device-coap/res"
+    daemon: simple
+    plugs:
+      - network
+      - network-bind
+
+parts:
+  version:
+    plugin: nil
+    source: snap/local
+    override-pull: |
+      cd $SNAPCRAFT_PROJECT_DIR
+      GIT_VERSION=$(git describe --tags --abbrev=0 | sed 's/v//')
+      if [ -z "$GIT_VERSION" ]; then
+        GIT_VERSION="0.0.0"
+      fi
+      snapcraftctl set-version ${GIT_VERSION}
+  config:
+    source: .
+    plugin: dump
+    organize:
+      res/configuration.toml: config/edgex-device-coap/res/configuration.toml
+      res/example-datatype.json: config/edgex-device-coap/res/profiles/example-datatype.json
+      LICENSE: usr/share/doc/edgex-device-coap/LICENSE
+      profiles: config/edgex-device-coap/res/profiles/example-datatype.json
+    override-build: |
+      snapcraftctl build
+      # change the host specifications to be localhost for the snap
+      sed -i \
+        -e s'@Host = \"edgex-core-data\"@Host = \"localhost\"@' \
+        -e s'@Host = \"edgex-core-metadata\"@Host = \"localhost\"@' \
+        -e s'@ProfilesDir = \"\"@ProfilesDir = \"\$SNAP_DATA/config/edgex-device-coap/res/profiles\"@' \
+        $SNAPCRAFT_PART_INSTALL/res/configuration.toml
+
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/doc/edgex-device-coap
+      mkdir -p $SNAPCRAFT_PART_INSTALL/config
+    stage: 
+      - config/*
+      - usr/share/doc/edgex-device-coap/LICENSE
+    prime: 
+      - config/*
+      - usr/share/doc/edgex-device-coap/LICENSE
+  
+  stage-patches:
+    source: scripts
+    plugin: dump
+    prime: [-*]
+    stage: [AutoConf_cmake_patch]
+
+  # libpaho-mqtt:
+  #   source: https://github.com/eclipse/paho.mqtt.c.git
+  #   plugin: cmake
+  #   override-build: |
+  #     cd $SNAPCRAFT_PART_SRC
+  #     snapcraftctl build
+  #   build-packages:
+  #     - build-essential
+  #     - gcc
+  #     - libssl-dev
+  #     - doxygen
+
+  device-sdk-c:
+    # after: 
+       # - libpaho-mqtt
+    plugin: cmake
+    cmake-parameters: 
+      - -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - -DCMAKE_BUILD_TYPE=Release
+    source: https://github.com/edgexfoundry/device-sdk-c.git
+    source-tag: v2.0.1-dev.12
+    source-depth: 1
+    source-subdir: src
+    override-build: |
+      # copy all of the dep sources from $SNAPCRAFT_STAGE into the build folder
+      cd $SNAPCRAFT_PART_SRC
+      cp -rv $SNAPCRAFT_STAGE/src/c/* src/c/
+      # cp -r $SNAPCRAFT_PART_BUILD/include/* include/
+      snapcraftctl build
+    build-packages:
+      - libcurl4-openssl-dev
+      - libmicrohttpd-dev
+      - libyaml-dev
+      - uuid-dev
+      - libcbor-dev
+      - libhiredis-dev  
+      - libssl-dev
+
+  edgex-device-coap:
+    source: .
+    plugin: cmake
+    override-pull: |
+      snapcraftctl pull
+      cd $SNAPCRAFT_PROJECT_DIR
+      make version
+    source-subdir: src/c
+    after: 
+      - device-sdk-c
+      # - libmraa
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+
+  pkgs:
+    plugin: nil
+    stage-packages:
+       - libcurl4-openssl-dev
+       - libmicrohttpd-dev
+       - libyaml-dev
+       - uuid-runtime
+       - libcbor0
+       - curl
+       - libpaho-mqtt-dev
+       - libhiredis-dev
+       
